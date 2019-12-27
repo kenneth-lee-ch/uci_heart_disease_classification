@@ -1,0 +1,243 @@
+---
+title: "UCI Heart Disease Classification"
+author: "Kenneth Lee"
+date: "12/5/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Introduction
+
+In this project, we aim to train a classifier to accurately classify a person whether or not has a heart disease problem using logistic regression model based on sensitivity and classification accuracy. Also, it will be beneficial to see if we can reduce the number of features to perform a good classification that may potentially lower the costs of collecting expensive features in the future. Most people believe that age should be a strong indicator whether a person has a heart disease problem. Our project will also validate this claim and see if there are any better indicators with hypothesis testing.
+
+
+```{r  Load data}
+# Load packages
+library(ROCR)
+library(caret)
+library(tidyverse)
+library(ggplot2)
+
+colnames = c("age","sex","chest_pain_type","resting_blood_pressure","serum_cholestoral", "fasting_blood_sugar" ,"resting_results" ,"maximum_heart_rate_achieved","exercise_induced_angina","oldpeak" , "slope", "major_vessels" ,"thal","disease")
+data <- read.table("heart.dat", col.names = colnames)
+# Dieases: Absence (1) or presence (2) of heart disease
+# Sex: 1=male; 0=female
+
+# Check the first few rows of the data
+head(data)
+
+# Check the structure of the data
+# Besides disease, all are numeric, 270 rows, 14 columns, 13 features, 1 output. Based on the data description, there is no missing data
+str(data) 
+```
+```{r change data type}
+# Change the sex to be character type
+data$sex <- as.character(data$sex)
+data$sex <- ifelse(data$sex=="0",'Female','Male')
+data$chest_pain_type <- as.factor(data$chest_pain_type)
+data$resting_results <- as.factor(data$resting_results)
+data$thal <- as.factor(data$thal)
+# Change the response variable from 1 and 2 to 0 to 1
+data$disease <- ifelse(data$disease==1,0,1)
+```
+## Data Exploration
+
+We first start off by looking at the distribution of the data. We see that the number of people with heart disease is roughly the same as the number of people who don’t have heart disease. Therefore, we are not dealing with a highly skewed dataset in terms of the outcome variable. 
+
+```{r outcome variable distribution}
+# Count how many disease
+ggplot(data=data, aes(as.factor(data$disease))) + geom_histogram(stat='count')+xlab("Disease")+ labs(title="Data distribution by Disease")
+```
+Then we look at the distribution of age for the entire dataset. The age ranges from 30 to almost 80.
+
+```{r age distribution}
+#----------------The relationship between age and those who have heart diease----------------
+# Look at the age, most of the people are around 40-60
+ggplot(data=data, aes(data$age)) + geom_histogram()+xlab("Age")+ labs(title="Data distribution by Age")
+```
+
+However, when we only look at those who have heart disease, we see that they are mostly around the age of 60; in particular, the majority of these people are female.
+
+```{r heart diesease presence by age}
+# Look at those who have heart disease by age
+ggplot(data=data[data$disease==1,], aes(data[data$disease==1,]$age)) + geom_histogram()+xlab("Age")+labs(title="Age distribution for People with heart disease only")
+# Use a density plot to see the relationship among age, sex in the people of heart diease
+ggplot(data=data[data$disease==1,], aes(x=data[data$disease==1,]$age, colour=as.factor(data[data$disease==1,]$sex))) + 
+    geom_density()+xlab("Age")+labs(title="Distribution of people with heart diease by gender and age", colour='Sex')
+```
+
+We see that for those who have heart disease, they tend to have lower maximum heart rate achieved, higher resting blood pressure. 
+
+```{r other variables associated with heart diesease}
+# Compare characteristics between Absence (1) or presence (2) of heart disease
+# Remember Absence (1) or presence (2) of heart disease
+# Boxplot to comapre different distribution between heart disease and non heart disease
+main <- ggplot(data = data)
+main + geom_boxplot(mapping = aes(x = as.factor(disease), y = maximum_heart_rate_achieved, fill=as.factor(sex)))
+main + geom_boxplot(mapping = aes(x = as.factor(disease), y = serum_cholestoral, fill=as.factor(sex)))
+main + geom_boxplot(mapping = aes(x = as.factor(disease), y = resting_blood_pressure, fill=as.factor(sex) ))
+main + geom_boxplot(mapping = aes(x = as.factor(disease), y = age, fill=as.factor(sex)))
+```
+
+Moreover, we want to explore the correlation among quantitative variables. We see that age and maximum heart rate achieved is negatively correlated. Other than that, we don’t see any strong correlation.
+
+```{r Scatterplot for real-valued variables}
+# Scatterplot matrix: plotting all the real-valued variables
+pairs(~age+resting_blood_pressure+serum_cholestoral+maximum_heart_rate_achieved+oldpeak,data=data, main="Scatterplot Matrix with Age")
+```
+We also see that males tend to have higher cholesterol rate.
+
+```{r cholestrol by sex}
+# Male tends to have high cholestrol
+g<-ggplot(data=data)
+g+geom_bar(stat="identity",aes(x=as.factor(data$sex),y=data$serum_cholestoral))+xlab("Sex")+ylab("cholestrol")+theme(legend.position = "none")
+
+data$sex <- ifelse(data$sex=="Female",0,1)
+```
+
+```{r Splitting data}
+# Split training and testing data
+set.seed(42)
+# List = F means it should not return as a list, we split it in 80% 20%,
+trainIndex <- sample(1: nrow(data), size=nrow(data)*0.8, replace=FALSE)
+trainData <- data[trainIndex,]
+testData <- data[-trainIndex,]
+```
+## Classification with logistic regression
+
+For logistic regression model, we see that the predictor variable, age, doesn’t explain the response variable very well when other variables are present by looking at the p-value of 0.44687. 
+
+Also, the predictor, major vessels, explains the response variable more than the age since it is statistically significant with a p-value lower than 0.05. 
+
+Note that we use 0.6 cut-off threshold for the predicted probability for classification for model 1 by looking at the ROC curve.
+
+```{r logistic regression model 1}
+# Train a multiple logistic model
+# Model 1: use all predictors with first order
+model1 <- glm(disease~., data = trainData, family = "binomial")
+summary(model1)
+plot(model1)
+
+# choosing the best cut-off probabillity value to the model
+res <- predict(model1,type ="response")
+ROCR_pred <- prediction(res,trainData$disease)
+ROCR_perf <- performance(ROCR_pred,"tpr","fpr")
+plot(ROCR_perf,colorize=T,print.cutoffs.at =seq(0.1,by =0.1))
+
+predicted <- ifelse(predict(model1, testData, type='response')>.6,1,0)
+
+confusion<-table(predicted,factor(testData$disease),dnn = c("Predicted presense","True presense"))
+
+
+# Use recall rate to see how many actual people with heart-dieases we are able to capture
+confusion[4]/(confusion[3]+confusion[4])
+# Sensitivity
+sum(diag(confusion))/sum(confusion)
+```
+
+We see that by dropping two potential outliers, model 2 has a higher sensitivity rate of 0.78 in comparison with model 1. Thus, we drop those two potential outliers for training the other three types of logistic models.
+
+```{r logistic regression model 2}
+# Model 2: Will dropping potential outliers improve performance?
+data_drop_out <- trainData[!(rownames(trainData) %in% c("259","4")),]
+
+model2 <- glm(disease~., data = data_drop_out, family = "binomial")
+summary(model2)
+
+# choosing the best cut-off probabillity value to the model
+res <- predict(model2,type ="response")
+ROCR_pred <- prediction(res,data_drop_out$disease)
+ROCR_perf <- performance(ROCR_pred,"tpr","fpr")
+plot(ROCR_perf,colorize=T,print.cutoffs.at =seq(0.1,by =0.1))
+
+predicted <- ifelse(predict(model2, testData, type='response')>.5,1,0)
+
+confusion_drop<-table(predicted,factor(testData$disease),dnn = c("Predicted presense","True presense"))
+
+# Use recall rate to see how many actual people with heart-dieases we are able to capture
+confusion_drop[4]/(confusion_drop[3]+confusion_drop[4])
+# Sensitivity
+sum(diag(confusion_drop))/sum(confusion_drop)
+```
+Also, model 3 that utilizes two-way interaction terms does not necessarily perform better than model 2 which only include first order predictors. Therefore, combining predictors into one predictor variable may not necessarily improve classification performance. 
+
+```{r logistic regression model 3}
+# Model 3: use all predictors with 2-way interaction term to see if we can gain any accuracy gain 
+model3 <- glm(disease~.^2, data = data_drop_out, family = "binomial")
+summary(model3)
+
+# choosing the best cut-off probabillity value to the model
+res3 <- predict(model3,type ="response")
+ROCR_pred3 <- prediction(res3,data_drop_out$disease)
+ROCR_perf3 <- performance(ROCR_pred3,"tpr","fpr")
+plot(ROCR_perf3,colorize=T,print.cutoffs.at =seq(0.1,by =0.1))
+
+predicted3 <- ifelse(predict(model3, testData, type='response')>.6,1,0)
+confusion3<-table(predicted3,factor(testData$disease),dnn = c("Predicted presense","True presense"))
+
+# Use recall rate to see how many actual people with heart-dieases we are able to capture
+confusion3[4]/(confusion3[3]+confusion3[4])
+# Sensitivity
+sum(diag(confusion3))/sum(confusion3)
+```
+
+```{r logistic regression model 4}
+# Model4: use only real valued variables
+model4 <- glm(disease~age+resting_blood_pressure+serum_cholestoral+maximum_heart_rate_achieved+oldpeak+major_vessels, data = data_drop_out, family = "binomial")
+
+# choosing the best cut-off probabillity value to the model
+res4 <- predict(model4,type ="response")
+ROCR_pred4 <- prediction(res4,data_drop_out$disease)
+ROCR_perf4 <- performance(ROCR_pred4,"tpr","fpr")
+plot(ROCR_perf4,colorize=T,print.cutoffs.at =seq(0.1,by =0.1))
+
+predicted4 <- ifelse(predict(model4, testData, type='response')>.6,1,0)
+confusion4<-table(predicted4,factor(testData$disease),dnn = c("Predicted presense","True presense"))
+
+# Use recall rate to see how many actual people with heart-dieases we are able to capture
+confusion4[4]/(confusion4[3]+confusion4[4])
+# Sensitivity
+sum(diag(confusion4))/sum(confusion4)
+
+# Let's try something new by using cross validation 
+fitcontrol <- trainControl(method="repeatedcv", number=10, repeats=3)
+# train the model
+model_importance <- train(factor(disease)~., data=data_drop_out, method="glm", trControl=fitcontrol, family = "binomial")
+# estimate variable importance
+importance <- varImp(model_importance , scale=FALSE)
+# summarize importance
+print(importance)
+# plot importance
+plot(importance)
+
+```
+
+We have found that the model 5 has outperformed the other logistic regression models with accuracy of 0.80 and the sensitivity rate of 0.79.
+
+Note that the model 5 doesn’t use all the predictor variables provided in the dataset, but it can still outperform the model that uses all predictors. We are able to avoid using fasting blood sugar to predict the presence of heart disease. Therefore, it is possible to utilize only some of the predictors to achieve satisfactory performance
+
+```{r logistic regression model 5}
+# Model 5: using the top 8 most important features
+model5 <- glm(disease~major_vessels+chest_pain_type+thal+sex+resting_blood_pressure+slope+oldpeak+serum_cholestoral+exercise_induced_angina+maximum_heart_rate_achieved, data = data_drop_out, family = "binomial")
+
+# Plot ROC curve
+res5 <- predict(model5,type ="response")
+ROCR_pred5 <- prediction(res5,data_drop_out$disease)
+ROCR_perf5 <- performance(ROCR_pred5,"tpr","fpr")
+plot(ROCR_perf5,colorize=T,print.cutoffs.at =seq(0.1,by =0.1))
+
+predicted5 <- ifelse(predict(model5, testData, type='response')>.6,1,0)
+confusion5<-table(predicted5,factor(testData$disease),dnn = c("Predicted presense","True presense"))
+
+# Calculate the number of actual number of people with heart-dieases that we are able to capture
+confusion5[4]/(confusion5[3]+confusion5[4])
+# Sensitivity
+sum(diag(confusion5))/sum(confusion5)
+
+```
+
+
+
+
